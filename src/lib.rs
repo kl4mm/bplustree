@@ -1,12 +1,12 @@
-use std::{collections::BinaryHeap, ptr};
+use std::{collections::BTreeSet, ptr};
 
-#[derive(PartialEq, Eq, Debug)]
+#[derive(PartialEq, Eq, Debug, Clone, Copy)]
 enum Either<A, B> {
     Left(A),
     Right(B),
 }
 
-#[derive(PartialEq, Eq, Debug)]
+#[derive(PartialEq, Eq, Debug, Clone, Copy)]
 pub struct Slot<A, B>(A, Either<B, *mut Node<A, B>>);
 
 impl<A, B> PartialOrd for Slot<A, B>
@@ -51,14 +51,28 @@ pub enum NodeType {
 
 pub struct Node<K, V> {
     t: NodeType,
-    values: BinaryHeap<Slot<K, V>>,
+    values: BTreeSet<Slot<K, V>>,
     next: *mut Node<K, V>,
+    max: usize,
+}
+
+pub struct Seperator<K, V> {
+    k: K,
+    ptr: *mut Node<K, V>,
+}
+
+pub type Seperators<K, V> = (Seperator<K, V>, Seperator<K, V>);
+
+impl<K, V> Seperator<K, V> {
+    pub fn new(k: K, ptr: *mut Node<K, V>) -> Self {
+        Self { k, ptr }
+    }
 }
 
 impl<K, V> BTree<K, V>
 where
-    K: Ord + Copy,
-    V: Eq,
+    K: Clone + Copy + Ord + Copy,
+    V: Clone + Copy + Eq,
 {
     pub fn new(root: Node<K, V>) -> Self {
         let root = Box::into_raw(Box::new(root));
@@ -66,13 +80,13 @@ where
         Self { root }
     }
 
-    pub fn insert(node: *mut Node<K, V>, value: Slot<K, V>) {
-        assert!(!node.is_null());
+    pub fn insert(raw_node: *mut Node<K, V>, value: Slot<K, V>) -> Option<Seperators<K, V>> {
+        assert!(!raw_node.is_null());
 
-        let node = unsafe { &mut (*node) };
+        let node = unsafe { &mut (*raw_node) };
 
-        match node.t {
-            NodeType::Internal => {
+        let split = match node.t {
+            NodeType::Internal => 'leaf: {
                 for slot in &node.values {
                     if value >= *slot {
                         let ptr = match slot.1 {
@@ -80,27 +94,69 @@ where
                             Either::Right(ptr) => ptr,
                         };
 
-                        return Self::insert(ptr, value);
+                        // Will BTreeSet replace any existing slots if k == slot.k?
+                        if let Some((sep_a, sep_b)) = Self::insert(ptr, value) {
+                            node.values.replace(Slot::new_internal(sep_a.k, sep_a.ptr));
+                            node.values.replace(Slot::new_internal(sep_b.k, sep_b.ptr));
+                        }
+
+                        break 'leaf node.almost_full();
                     }
                 }
 
                 // At this point insert a new leaf node, add slot to internal node, insert into
                 // leaf
-                let leaf: *mut Node<K, V> = Box::into_raw(Box::new(Node::new_leaf()));
+                let leaf: *mut Node<K, V> = Box::into_raw(Box::new(Node::new_leaf(node.max)));
                 let internal_slot = Slot::new_internal(value.0, leaf);
-                node.values.push(internal_slot);
-                Self::insert(leaf, value)
+                node.values.insert(internal_slot);
+
+                // This should always return None since it's a new page
+                Self::insert(leaf, value);
+
+                node.almost_full()
             }
-            NodeType::Leaf => {
+            NodeType::Leaf => 'leaf: {
                 let last = node.values.iter().last();
                 if last.is_none() || node.next.is_null() || value > *last.unwrap() {
-                    node.values.push(value);
-                    return;
+                    node.values.insert(value);
+
+                    break 'leaf node.almost_full();
                 }
 
-                Self::insert(node.next, value)
+                // This should really only run when the structure is just a linked list. Once
+                // internal nodes are added this should be unreachable, since the internal node
+                // will direct to the correct leaf node where value > last is always true. Ignore
+                // any seperators that come out of this:
+                Self::insert(node.next, value);
+                false
             }
+        };
+
+        if !split {
+            return None;
         }
+
+        // Create a new node of the same type, insert into both, return seperators to caller?
+        let raw_new_node: *mut Node<K, V> = match node.t {
+            NodeType::Internal => Box::into_raw(Box::new(Node::new_internal(node.max))),
+            NodeType::Leaf => Box::into_raw(Box::new(Node::new_leaf(node.max))),
+        };
+        let new_node = unsafe { &mut (*raw_new_node) };
+
+        let values = std::mem::take(&mut node.values);
+
+        for slot in values.iter().take(node.max / 2) {
+            node.values.insert(*slot);
+        }
+        for slot in values.iter().skip(node.max / 2) {
+            new_node.values.insert(*slot);
+        }
+
+        // caller will reinsert, will know if split is needed
+        Some((
+            Seperator::new(node.values.last().unwrap().0, raw_node),
+            Seperator::new(new_node.values.last().unwrap().0, raw_new_node),
+        ))
     }
 
     pub fn print(node: *mut Node<K, V>)
@@ -140,20 +196,26 @@ where
     K: Ord,
     V: Eq,
 {
-    pub fn new_leaf() -> Self {
+    pub fn new_leaf(max: usize) -> Self {
         Self {
             t: NodeType::Leaf,
-            values: BinaryHeap::new(),
+            values: BTreeSet::new(),
             next: ptr::null_mut(),
+            max,
         }
     }
 
-    pub fn new_internal() -> Self {
+    pub fn new_internal(max: usize) -> Self {
         Self {
             t: NodeType::Leaf,
-            values: BinaryHeap::new(),
+            values: BTreeSet::new(),
             next: ptr::null_mut(),
+            max,
         }
+    }
+
+    pub fn almost_full(&self) -> bool {
+        self.values.len() + 1 == self.max
     }
 }
 
@@ -163,7 +225,8 @@ mod test {
 
     #[test]
     fn test_btree() {
-        let root = Box::into_raw(Box::new(Node::new_leaf()));
+        const MAX: usize = 5;
+        let root = Box::into_raw(Box::new(Node::new_leaf(MAX)));
 
         BTree::insert(root, Slot::new_leaf(1, 2));
         BTree::insert(root, Slot::new_leaf(3, 4));
