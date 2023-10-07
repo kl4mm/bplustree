@@ -6,6 +6,15 @@ enum Either<A, B> {
     Right(B),
 }
 
+macro_rules! get_right {
+    ( $slot:ident ) => {{
+        match $slot.1 {
+            Either::Left(_) => unreachable!(),
+            Either::Right(r) => r,
+        }
+    }};
+}
+
 #[derive(PartialEq, Eq, Debug, Clone, Copy)]
 pub struct Slot<A, B>(A, Either<B, *mut Node<A, B>>);
 
@@ -37,10 +46,13 @@ impl<A, B> Slot<A, B> {
     pub fn new_internal(a: A, node: *mut Node<A, B>) -> Self {
         Self(a, Either::Right(node))
     }
-}
 
-pub struct BTree<K, V> {
-    root: *mut Node<K, V>,
+    pub fn is_leaf(&self) -> bool {
+        match self.1 {
+            Either::Left(_) => true,
+            Either::Right(_) => false,
+        }
+    }
 }
 
 #[derive(PartialEq)]
@@ -56,17 +68,86 @@ pub struct Node<K, V> {
     max: usize,
 }
 
-pub struct Seperator<K, V> {
-    k: K,
-    ptr: *mut Node<K, V>,
+impl<K, V> Node<K, V>
+where
+    K: Copy + Ord,
+    V: Copy + Eq,
+{
+    pub fn new_leaf(max: usize) -> Self {
+        Self {
+            t: NodeType::Leaf,
+            values: BTreeSet::new(),
+            next: ptr::null_mut(),
+            max,
+        }
+    }
+
+    pub fn new_internal(max: usize) -> Self {
+        Self {
+            t: NodeType::Leaf,
+            values: BTreeSet::new(),
+            next: ptr::null_mut(),
+            max,
+        }
+    }
+
+    pub fn almost_full(&self) -> bool {
+        self.values.len() >= self.max / 2
+    }
+
+    /// Returns greater half and new key for it
+    pub fn split(&mut self) -> (*mut Node<K, V>, K) {
+        let len = self.values.len();
+        let mid = *self
+            .values
+            .iter()
+            .nth(len / 2)
+            .expect("there should be a mid value");
+
+        let gt = self.values.split_off(&mid);
+        let k = mid.0;
+
+        let mut node = match self.t {
+            NodeType::Internal => Node::new_internal(self.max),
+            NodeType::Leaf => Node::new_leaf(self.max),
+        };
+        node.values = gt;
+
+        // if self is a leaf node and has a next node then splitting it should set the new next
+        // nodes next node to selfs next node.
+        if self.t == NodeType::Leaf && !self.next.is_null() {
+            node.next = self.next;
+        }
+
+        let node = Box::into_raw(Box::new(node));
+        if self.t == NodeType::Leaf {
+            if !self.next.is_null() {
+                unsafe { (*node).next = self.next };
+            }
+
+            self.next = node;
+        }
+
+        (node, k)
+    }
+
+    /// Returns `None` if self is a leaf.
+    pub fn find_child(&mut self, value: Slot<K, V>) -> Option<*mut Node<K, V>> {
+        if self.is_leaf() {
+            return None;
+        }
+
+        let n = self.values.iter().find(|n| value < **n).unwrap();
+        Some(get_right!(n))
+    }
+
+    pub fn is_leaf(&self) -> bool {
+        self.t == NodeType::Leaf
+    }
 }
 
-pub type Seperators<K, V> = (Seperator<K, V>, Seperator<K, V>);
-
-impl<K, V> Seperator<K, V> {
-    pub fn new(k: K, ptr: *mut Node<K, V>) -> Self {
-        Self { k, ptr }
-    }
+pub struct BTree<K, V> {
+    root: *mut Node<K, V>,
 }
 
 impl<K, V> BTree<K, V>
@@ -80,83 +161,51 @@ where
         Self { root }
     }
 
-    pub fn insert(raw_node: *mut Node<K, V>, value: Slot<K, V>) -> Option<Seperators<K, V>> {
-        assert!(!raw_node.is_null());
+    pub fn insert(
+        raw_node: *mut Node<K, V>,
+        value: Slot<K, V>,
+    ) -> Option<(Slot<K, V>, Slot<K, V>)> {
+        let mut node = unsafe { &mut (*raw_node) };
 
-        let node = unsafe { &mut (*raw_node) };
+        // If `split` is set, it will hold the updated slot for `node` and a new slot for the
+        // greater node
+        let mut split = None;
+        if node.almost_full() {
+            let (gt_node, gt_k) = node.split();
 
-        let split = match node.t {
-            NodeType::Internal => 'leaf: {
-                for slot in &node.values {
-                    if value >= *slot {
-                        let ptr = match slot.1 {
-                            Either::Left(_) => unreachable!(),
-                            Either::Right(ptr) => ptr,
-                        };
+            let replace_k = node
+                .values
+                .last()
+                .expect("there should be a last node after split")
+                .0;
 
-                        // Will BTreeSet replace any existing slots if k == slot.k?
-                        if let Some((sep_a, sep_b)) = Self::insert(ptr, value) {
-                            node.values.replace(Slot::new_internal(sep_a.k, sep_a.ptr));
-                            node.values.replace(Slot::new_internal(sep_b.k, sep_b.ptr));
-                        }
+            let new_slot = Slot::new_internal(gt_k, gt_node);
+            let replace_slot = Slot::new_internal(replace_k, node);
 
-                        break 'leaf node.almost_full();
-                    }
-                }
+            split = Some((replace_slot, new_slot))
+        }
 
-                // At this point insert a new leaf node, add slot to internal node, insert into
-                // leaf
-                let leaf: *mut Node<K, V> = Box::into_raw(Box::new(Node::new_leaf(node.max)));
-                let internal_slot = Slot::new_internal(value.0, leaf);
-                node.values.insert(internal_slot);
-
-                // This should always return None since it's a new page
-                Self::insert(leaf, value);
-
-                node.almost_full()
+        // If there was a split, check if the value needs to be inserted into the new node
+        if let Some((replace_slot, new_slot)) = split {
+            if value > replace_slot {
+                node = unsafe { &mut (*get_right!(new_slot)) };
             }
-            NodeType::Leaf => 'leaf: {
-                let last = node.values.iter().last();
-                if last.is_none() || node.next.is_null() || value > *last.unwrap() {
-                    node.values.insert(value);
+        }
 
-                    break 'leaf node.almost_full();
-                }
-
-                // This should really only run when the structure is just a linked list. Once
-                // internal nodes are added this should be unreachable, since the internal node
-                // will direct to the correct leaf node where value > last is always true. Ignore
-                // any seperators that come out of this:
-                Self::insert(node.next, value);
-                false
+        let ptr = match node.find_child(value) {
+            Some(ptr) => ptr,
+            None => {
+                node.values.replace(value);
+                return split;
             }
         };
 
-        if !split {
-            return None;
+        if let Some((replace_slot, new_slot)) = BTree::insert(ptr, value) {
+            node.values.replace(replace_slot); // Test this replaces rather than adds
+            node.values.replace(new_slot);
         }
 
-        // Create a new node of the same type, insert into both, return seperators to caller?
-        let raw_new_node: *mut Node<K, V> = match node.t {
-            NodeType::Internal => Box::into_raw(Box::new(Node::new_internal(node.max))),
-            NodeType::Leaf => Box::into_raw(Box::new(Node::new_leaf(node.max))),
-        };
-        let new_node = unsafe { &mut (*raw_new_node) };
-
-        let values = std::mem::take(&mut node.values);
-
-        for slot in values.iter().take(node.max / 2) {
-            node.values.insert(*slot);
-        }
-        for slot in values.iter().skip(node.max / 2) {
-            new_node.values.insert(*slot);
-        }
-
-        // caller will reinsert, will know if split is needed
-        Some((
-            Seperator::new(node.values.last().unwrap().0, raw_node),
-            Seperator::new(new_node.values.last().unwrap().0, raw_new_node),
-        ))
+        split
     }
 
     pub fn print(node: *mut Node<K, V>)
@@ -189,33 +238,29 @@ where
             }
         }
     }
-}
 
-impl<K, V> Node<K, V>
-where
-    K: Ord,
-    V: Eq,
-{
-    pub fn new_leaf(max: usize) -> Self {
-        Self {
-            t: NodeType::Leaf,
-            values: BTreeSet::new(),
-            next: ptr::null_mut(),
-            max,
+    pub fn print_list(node: *mut Node<K, V>)
+    where
+        K: std::fmt::Debug,
+        V: std::fmt::Debug,
+    {
+        if node.is_null() {
+            return;
         }
-    }
 
-    pub fn new_internal(max: usize) -> Self {
-        Self {
-            t: NodeType::Leaf,
-            values: BTreeSet::new(),
-            next: ptr::null_mut(),
-            max,
+        let node = unsafe { &(*node) };
+        match node.t {
+            NodeType::Internal => {
+                panic!("Expected leaf node for list print");
+            }
+            NodeType::Leaf => {
+                println!("Leaf Node: Next: {:?}", node.next);
+                println!("Contents: {:?}", node.values);
+                println!();
+
+                Self::print_list(node.next)
+            }
         }
-    }
-
-    pub fn almost_full(&self) -> bool {
-        self.values.len() + 1 == self.max
     }
 }
 
@@ -225,12 +270,13 @@ mod test {
 
     #[test]
     fn test_btree() {
-        const MAX: usize = 5;
+        const MAX: usize = 4;
         let root = Box::into_raw(Box::new(Node::new_leaf(MAX)));
 
-        BTree::insert(root, Slot::new_leaf(1, 2));
-        BTree::insert(root, Slot::new_leaf(3, 4));
+        for (k, v) in (0..10).zip(10..20) {
+            BTree::insert(root, Slot::new_leaf(k, v));
+        }
 
-        BTree::print(root);
+        BTree::print_list(root);
     }
 }
