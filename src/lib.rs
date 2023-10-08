@@ -182,11 +182,9 @@ where
             let new_slot = Slot::new_internal(gt_k, gt_node);
             let replace_slot = Slot::new_internal(replace_k, node);
 
-            split = Some((replace_slot, new_slot))
-        }
+            split = Some((replace_slot, new_slot));
 
-        // If there was a split, check if the value needs to be inserted into the new node
-        if let Some((replace_slot, new_slot)) = split {
+            // If there was a split, check if the value needs to be inserted into the new node
             if value > replace_slot {
                 node = unsafe { &mut (*get_right!(new_slot)) };
             }
