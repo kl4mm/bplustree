@@ -55,17 +55,19 @@ impl<A, B> Slot<A, B> {
     }
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Debug)]
 pub enum NodeType {
     Internal,
     Leaf,
 }
 
+#[derive(Debug)]
 pub struct Node<K, V> {
     t: NodeType,
     values: BTreeSet<Slot<K, V>>,
     next: *mut Node<K, V>,
     max: usize,
+    pub is_root: bool,
 }
 
 impl<K, V> Node<K, V>
@@ -79,16 +81,22 @@ where
             values: BTreeSet::new(),
             next: ptr::null_mut(),
             max,
+            is_root: false,
         }
     }
 
     pub fn new_internal(max: usize) -> Self {
         Self {
-            t: NodeType::Leaf,
+            t: NodeType::Internal,
             values: BTreeSet::new(),
             next: ptr::null_mut(),
             max,
+            is_root: false,
         }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.values.is_empty()
     }
 
     pub fn almost_full(&self) -> bool {
@@ -137,7 +145,7 @@ where
             return None;
         }
 
-        let n = self.values.iter().find(|n| value < **n).unwrap();
+        let n = self.values.iter().find(|n| value < **n)?;
         Some(get_right!(n))
     }
 
@@ -148,20 +156,37 @@ where
 
 pub struct BTree<K, V> {
     root: *mut Node<K, V>,
+    max: usize,
 }
 
+use std::fmt::Debug;
+use std::ops::Add;
 impl<K, V> BTree<K, V>
 where
-    K: Clone + Copy + Ord + Copy,
-    V: Clone + Copy + Eq,
+    K: Clone + Copy + Debug + Add<u8, Output = K> + Ord + Copy,
+    V: Clone + Copy + Debug + Eq,
 {
-    pub fn new(root: Node<K, V>) -> Self {
-        let root = Box::into_raw(Box::new(root));
-
-        Self { root }
+    pub fn new(max: usize) -> Self {
+        Self {
+            root: ptr::null_mut(),
+            max,
+        }
     }
 
-    pub fn insert(
+    pub fn insert(&mut self, entry: Slot<K, V>) {
+        assert!(entry.is_leaf());
+
+        if self.root.is_null() {
+            let mut root = Node::new_internal(self.max);
+            root.is_root = true;
+            self.root = Box::into_raw(Box::new(root));
+        }
+
+        let sep = Self::_insert(self.root, entry);
+    }
+
+    #[must_use]
+    pub fn _insert(
         raw_node: *mut Node<K, V>,
         value: Slot<K, V>,
     ) -> Option<(Slot<K, V>, Slot<K, V>)> {
@@ -176,8 +201,8 @@ where
             let replace_k = node
                 .values
                 .last()
-                .expect("there should be a last node after split")
-                .0;
+                .map(|s| s.0)
+                .expect("there should be a last node after split");
 
             let new_slot = Slot::new_internal(gt_k, gt_node);
             let replace_slot = Slot::new_internal(replace_k, node);
@@ -192,13 +217,32 @@ where
 
         let ptr = match node.find_child(value) {
             Some(ptr) => ptr,
+            None if node.is_root || !node.is_leaf() => {
+                // Figure out what type of node we need to create:
+                let new = match node.values.first() {
+                    Some(n) => match n.1 {
+                        Either::Left(_) => unreachable!(),
+                        Either::Right(ptr) => match unsafe { &(*ptr).t } {
+                            NodeType::Internal => Node::new_internal(node.max),
+                            NodeType::Leaf => Node::new_leaf(node.max),
+                        },
+                    },
+                    None => Node::new_leaf(node.max),
+                };
+
+                let ptr = Box::into_raw(Box::new(new));
+                let slot = Slot::new_internal(value.0 + 1, ptr);
+                node.values.insert(slot);
+
+                ptr
+            }
             None => {
                 node.values.replace(value);
                 return split;
             }
         };
 
-        if let Some((replace_slot, new_slot)) = BTree::insert(ptr, value) {
+        if let Some((replace_slot, new_slot)) = BTree::_insert(ptr, value) {
             node.values.replace(replace_slot); // Test this replaces rather than adds
             node.values.replace(new_slot);
         }
@@ -206,20 +250,22 @@ where
         split
     }
 
-    pub fn print(node: *mut Node<K, V>)
+    pub fn print(raw_node: *mut Node<K, V>)
     where
         K: std::fmt::Debug,
         V: std::fmt::Debug,
     {
-        if node.is_null() {
+        if raw_node.is_null() {
             return;
         }
 
-        let node = unsafe { &(*node) };
+        let node = unsafe { &(*raw_node) };
         match node.t {
             NodeType::Internal => {
-                println!("Internal Node: {:?}", node.next);
+                println!("Internal Node: {:?}", raw_node);
                 println!("Contents: {:?}", node.values);
+                println!("Is root: {:?}", node.is_root);
+                println!("Next (should be null): {:?}", node.next);
                 println!();
 
                 for slot in &node.values {
@@ -230,33 +276,10 @@ where
                 }
             }
             NodeType::Leaf => {
-                println!("Leaf Node: Next: {:?}", node.next);
+                println!("Leaf Node {:?}", raw_node);
+                println!("Next: {:?}", node.next);
                 println!("Contents: {:?}", node.values);
                 println!()
-            }
-        }
-    }
-
-    pub fn print_list(node: *mut Node<K, V>)
-    where
-        K: std::fmt::Debug,
-        V: std::fmt::Debug,
-    {
-        if node.is_null() {
-            return;
-        }
-
-        let node = unsafe { &(*node) };
-        match node.t {
-            NodeType::Internal => {
-                panic!("Expected leaf node for list print");
-            }
-            NodeType::Leaf => {
-                println!("Leaf Node: Next: {:?}", node.next);
-                println!("Contents: {:?}", node.values);
-                println!();
-
-                Self::print_list(node.next)
             }
         }
     }
@@ -268,13 +291,15 @@ mod test {
 
     #[test]
     fn test_btree() {
-        const MAX: usize = 4;
-        let root = Box::into_raw(Box::new(Node::new_leaf(MAX)));
+        const MAX: usize = 8;
+
+        let mut tree = BTree::new(MAX);
 
         for (k, v) in (0..10).zip(10..20) {
-            BTree::insert(root, Slot::new_leaf(k, v));
+            eprintln!("inserting {k}:{v}");
+            tree.insert(Slot::new_leaf(k, v));
         }
 
-        BTree::print_list(root);
+        BTree::print(tree.root);
     }
 }
