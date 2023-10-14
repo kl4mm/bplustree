@@ -182,9 +182,22 @@ where
             self.root = Box::into_raw(Box::new(root));
         }
 
-        let sep = Self::_insert(self.root, entry);
+        if let Some((old_root_slot, split_slot)) = BTree::_insert(self.root, entry) {
+            assert!(get_right!(old_root_slot) == self.root);
+
+            let root = unsafe { &mut (*self.root) };
+            root.is_root = false;
+
+            let mut new_root = Node::new_internal(self.max);
+            new_root.is_root = true;
+            new_root.values.insert(old_root_slot);
+            new_root.values.insert(split_slot);
+
+            self.root = Box::into_raw(Box::new(new_root));
+        }
     }
 
+    // TODO: Handle new leaves created from `find_child` match - ensure next nodes are set
     #[must_use]
     pub fn _insert(
         raw_node: *mut Node<K, V>,
@@ -279,7 +292,7 @@ where
                 println!("Leaf Node {:?}", raw_node);
                 println!("Next: {:?}", node.next);
                 println!("Contents: {:?}", node.values);
-                println!()
+                println!();
             }
         }
     }
