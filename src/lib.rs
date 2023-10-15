@@ -152,7 +152,7 @@ where
     }
 
     /// Returns `None` if self is a leaf.
-    pub fn find_child(&mut self, value: Slot<K, V>) -> Option<*mut Node<K, V>> {
+    pub fn find_child(&self, value: Slot<K, V>) -> Option<*mut Node<K, V>> {
         if self.is_leaf() {
             return None;
         }
