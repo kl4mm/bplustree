@@ -84,8 +84,8 @@ pub struct Node<K, V> {
 
 impl<K, V> Node<K, V>
 where
-    K: Copy + Ord,
-    V: Copy + Eq,
+    K: Copy + Debug + Ord,
+    V: Copy + Debug + Eq,
 {
     pub fn new_leaf(max: usize) -> Self {
         Self {
@@ -115,17 +115,21 @@ where
         self.values.len() >= self.max / 2
     }
 
-    /// Returns greater half and new key for it
+    // TODO: Internal splits should move a key up
+    /// Returns greater half, new key for it and new key for replace
     pub fn split(&mut self) -> (*mut Node<K, V>, K) {
         let len = self.values.len();
         let mid = *self
             .values
             .iter()
             .nth(len / 2)
-            .expect("there should be a mid value");
+            .expect("there should be a mid slot");
 
         let gt = self.values.split_off(&mid);
-        let k = mid.0;
+        let gt_k = gt
+            .last()
+            .map(|s| s.0)
+            .expect("gt should have a last element");
 
         let mut node = match self.t {
             NodeType::Internal => Node::new_internal(self.max),
@@ -148,7 +152,7 @@ where
             self.next = node;
         }
 
-        (node, k)
+        (node, gt_k)
     }
 
     /// Returns `None` if self is a leaf.
@@ -172,10 +176,10 @@ pub struct BTree<K, V> {
 }
 
 use std::fmt::Debug;
-use std::ops::Add;
+use std::ops::{Add, AddAssign};
 impl<K, V> BTree<K, V>
 where
-    K: Clone + Copy + Debug + Add<u8, Output = K> + Ord + Copy,
+    K: Clone + Copy + Debug + Add<u8, Output = K> + AddAssign<u8> + Ord + Copy,
     V: Clone + Copy + Debug + Eq,
 {
     pub fn new(max: usize) -> Self {
@@ -229,8 +233,8 @@ where
                 .map(|s| s.0)
                 .expect("there should be a last node after split");
 
-            let new_slot = Slot::new_internal(gt_k, gt_node);
-            let replace_slot = Slot::new_internal(replace_k, node);
+            let new_slot = Slot::new_internal(gt_k + 1, gt_node);
+            let replace_slot = Slot::new_internal(replace_k + 1, node);
 
             split = Some((replace_slot, new_slot));
 
@@ -289,12 +293,13 @@ where
 
         match node.find_child(slot) {
             Some(ptr) => Self::_get(ptr, slot),
-            None => {
+            None if node.is_leaf() => {
                 return match node.values.get(&slot) {
                     Some(slot) => Some(*slot),
                     None => None,
                 }
             }
+            None => None,
         }
     }
 
@@ -355,23 +360,27 @@ mod test {
 
     #[test]
     fn test_btree() {
-        const MAX: usize = 4;
+        const MAX: usize = 8;
 
         let mut tree = BTree::new(MAX);
 
-        for (k, v) in get_inserts(0..10) {
+        // let inserts = get_inserts(0..10);
+        let inserts = get_inserts(0..6);
+        for (k, v) in &inserts {
             eprintln!("inserting {k}:{v}");
-            tree.insert(Slot::new_leaf(k, v));
+            tree.insert(Slot::new_leaf(*k, *v));
         }
 
         BTree::print(tree.root);
 
-        // let test = tree.get(3).unwrap(); // value: 10
-        // assert!(get_left!(test) == 13);
+        for (k, v) in inserts {
+            let test = match tree.get(k) {
+                Some(t) => t,
+                None => panic!("Could not find {k}:{v}"),
+            };
 
-        // for (k, v) in (0..10).zip(10..20) {
-        //     let test = tree.get(k).unwrap(); // value: 10
-        //     assert!(get_left!(test) == v);
-        // }
+            let got = get_left!(test);
+            assert!(got == v, "Expected: {v}\n     Got {got}");
+        }
     }
 }
