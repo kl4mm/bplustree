@@ -1,9 +1,21 @@
 use std::{collections::BTreeSet, ptr};
 
+use rand::seq::SliceRandom;
+use rand::thread_rng;
+
 #[derive(PartialEq, Eq, Debug, Clone, Copy)]
 enum Either<A, B> {
     Left(A),
     Right(B),
+}
+
+macro_rules! get_left {
+    ( $slot:ident ) => {{
+        match $slot.1 {
+            Either::Left(l) => l,
+            Either::Right(_) => unreachable!(),
+        }
+    }};
 }
 
 macro_rules! get_right {
@@ -263,6 +275,29 @@ where
         split
     }
 
+    pub fn get(&self, key: K) -> Option<Slot<K, V>> {
+        if self.root.is_null() {
+            return None;
+        }
+
+        let test = Slot::new_internal(key, ptr::null_mut());
+        Self::_get(self.root, test)
+    }
+
+    fn _get(raw_node: *mut Node<K, V>, slot: Slot<K, V>) -> Option<Slot<K, V>> {
+        let node = unsafe { &(*raw_node) };
+
+        match node.find_child(slot) {
+            Some(ptr) => Self::_get(ptr, slot),
+            None => {
+                return match node.values.get(&slot) {
+                    Some(slot) => Some(*slot),
+                    None => None,
+                }
+            }
+        }
+    }
+
     pub fn print(raw_node: *mut Node<K, V>)
     where
         K: std::fmt::Debug,
@@ -300,19 +335,43 @@ where
 
 #[cfg(test)]
 mod test {
+    use std::ops::Range;
+
     use super::*;
+
+    fn get_inserts(key_range: Range<u8>) -> Vec<(u8, u8)> {
+        let mut ret = Vec::with_capacity(key_range.len());
+
+        let mut keys = key_range.collect::<Vec<u8>>();
+        keys.shuffle(&mut thread_rng());
+
+        for key in keys {
+            let value = key + 10;
+            ret.push((key, value));
+        }
+
+        ret
+    }
 
     #[test]
     fn test_btree() {
-        const MAX: usize = 8;
+        const MAX: usize = 4;
 
         let mut tree = BTree::new(MAX);
 
-        for (k, v) in (0..10).zip(10..20) {
+        for (k, v) in get_inserts(0..10) {
             eprintln!("inserting {k}:{v}");
             tree.insert(Slot::new_leaf(k, v));
         }
 
         BTree::print(tree.root);
+
+        // let test = tree.get(3).unwrap(); // value: 10
+        // assert!(get_left!(test) == 13);
+
+        // for (k, v) in (0..10).zip(10..20) {
+        //     let test = tree.get(k).unwrap(); // value: 10
+        //     assert!(get_left!(test) == v);
+        // }
     }
 }
