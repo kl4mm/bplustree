@@ -65,6 +65,13 @@ impl<A, B> Slot<A, B> {
             Either::Right(_) => false,
         }
     }
+
+    pub fn incr_k(&mut self)
+    where
+        A: AddAssign<u8>,
+    {
+        self.0 += 1;
+    }
 }
 
 #[derive(PartialEq, Debug)]
@@ -84,7 +91,7 @@ pub struct Node<K, V> {
 
 impl<K, V> Node<K, V>
 where
-    K: Copy + Debug + Ord + Add<u8, Output = K>,
+    K: Copy + Debug + Ord + AddAssign<u8>,
     V: Copy + Debug + Eq,
 {
     pub fn new_leaf(max: usize) -> Self {
@@ -125,7 +132,7 @@ where
     // solution: call last() after insert
 
     /// Returns greater half, new key for it and new key for replace
-    pub fn split(&mut self) -> (*mut Node<K, V>, K) {
+    pub fn split(&mut self) -> *mut Node<K, V> {
         let len = self.values.len();
         let mid = *self
             .values
@@ -134,49 +141,57 @@ where
             .expect("there should be a mid slot");
 
         let gt = self.values.split_off(&mid);
-        let gt_k = gt
-            .last()
-            .map(|s| s.0)
-            .expect("gt should have a last element");
 
-        let mut node = match self.t {
+        let mut gt_node = match self.t {
             NodeType::Internal => Node::new_internal(self.max),
             NodeType::Leaf => Node::new_leaf(self.max),
         };
-        node.values = gt;
+        gt_node.values = gt;
 
-        // if self is a leaf node and has a next node then splitting it should set the new next
-        // nodes next node to selfs next node.
-        if self.t == NodeType::Leaf && !self.next.is_null() {
-            node.next = self.next;
-        }
-
-        let node = Box::into_raw(Box::new(node));
+        let gt_node = Box::into_raw(Box::new(gt_node));
         if self.t == NodeType::Leaf {
             if !self.next.is_null() {
-                unsafe { (*node).next = self.next };
+                unsafe { (*gt_node).next = self.next };
             }
 
-            self.next = node;
+            self.next = gt_node;
         }
 
-        (node, gt_k)
+        gt_node
     }
 
-    // TODO: check node type here? do not + 1 if internal
     pub fn get_separators(
         &mut self,
-        other: Option<(*mut Node<K, V>, K)>,
+        other: Option<*mut Node<K, V>>,
+        // og: *mut Node<K, V>, // if self == other, use og in place of self
     ) -> Option<(Slot<K, V>, Slot<K, V>)> {
-        other.map(|(gt_node, gtk)| {
+        other.map(|raw_gt_node| {
             let rk = self
                 .values
                 .last()
                 .map(|s| s.0)
-                .expect("there should be a last node");
+                .expect("self should have a last slot");
 
-            let rs = Slot::new_internal(rk + 1, self);
-            let ns = Slot::new_internal(gtk + 1, gt_node);
+            let mut rs = Slot::new_internal(rk, self);
+
+            let gt_node = unsafe { &mut (*raw_gt_node) };
+            let gtk = gt_node
+                .values
+                .last()
+                .map(|s| s.0)
+                .expect("gt should have a last slot");
+
+            let mut ns = Slot::new_internal(gtk, raw_gt_node);
+
+            if !self.is_leaf() {
+                assert!(!gt_node.is_leaf());
+
+                // self.values.remove(&rs);
+                // gt_node.values.remove(&ns);
+            } else {
+                rs.incr_k();
+                ns.incr_k();
+            }
 
             (rs, ns)
         })
@@ -252,21 +267,9 @@ where
         // greater node
         let mut split = None;
         if node.almost_full() {
-            let (gt_node, gtk) = node.split();
+            let raw_gt_node = node.split();
 
-            // If the node was internal, then it needs the replacement key needs removed
-            if !node.is_leaf() {
-                let rk = node
-                    .values
-                    .last()
-                    .map(|s| s.0)
-                    .expect("there should be a last node after split");
-                let rk_slot = Slot::new_internal(rk, ptr::null_mut());
-
-                node.values.remove(&rk_slot);
-            }
-
-            split = node.get_separators(Some((gt_node, gtk)));
+            split = node.get_separators(Some(raw_gt_node));
 
             let last = node
                 .values
@@ -276,11 +279,9 @@ where
 
             // TODO: this makes returning get_separators later incorrect, should keep og node
             // around
-            if value.0 > last {
-                node = unsafe { &mut *gt_node };
+            if value.0 >= last {
+                node = unsafe { &mut *raw_gt_node };
             }
-
-            // split = Some((gt_node, gtk));
         }
 
         let ptr = match node.find_child(value) {
@@ -406,7 +407,7 @@ mod test {
         let mut tree = BTree::new(MAX);
 
         // let inserts = get_inserts(0..10);
-        let inserts = get_inserts(0..6);
+        let inserts = get_inserts(0..10);
         for (k, v) in &inserts {
             eprintln!("inserting {k}:{v}");
             tree.insert(Slot::new_leaf(*k, *v));
