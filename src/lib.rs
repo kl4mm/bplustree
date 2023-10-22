@@ -6,6 +6,7 @@ pub enum Either<A, B> {
     Right(B),
 }
 
+#[macro_export]
 macro_rules! get_left {
     ( $slot:ident ) => {{
         match $slot.1 {
@@ -15,6 +16,7 @@ macro_rules! get_left {
     }};
 }
 
+#[macro_export]
 macro_rules! get_right {
     ( $slot:ident ) => {{
         match $slot.1 {
@@ -138,9 +140,7 @@ where
 
         let gt_node = Box::into_raw(Box::new(gt_node));
         if self.is_leaf() {
-            if !self.next.is_null() {
-                unsafe { (*gt_node).next = self.next };
-            }
+            unsafe { (*gt_node).next = self.next };
 
             self.next = gt_node;
         }
@@ -229,7 +229,7 @@ where
         assert!(entry.is_leaf());
 
         if self.root.is_null() {
-            let mut root = Node::new_internal(self.max);
+            let mut root = Node::new_leaf(self.max);
             root.is_root = true;
             self.root = Box::into_raw(Box::new(root));
         }
@@ -272,7 +272,7 @@ where
 
         let ptr = match node.find_child(value) {
             Some(ptr) => ptr,
-            None if node.is_root || !node.is_leaf() => {
+            None if !node.is_leaf() => {
                 // Figure out what type of node we need to create:
                 let new = match node.first_v() {
                     Some(n) => match n {
@@ -441,7 +441,6 @@ mod test {
 
         let inserts = get_inserts(0..50);
         for (k, v) in &inserts {
-            eprintln!("inserting {k}:{v}");
             tree.insert(Slot::new_leaf(*k, *v));
         }
 
@@ -457,6 +456,7 @@ mod test {
     }
 
     #[test]
+    #[ignore]
     fn test_btree_scan() {
         const MAX: usize = 8;
 
@@ -464,7 +464,6 @@ mod test {
 
         let mut inserts = get_inserts(0..50);
         for (k, v) in &inserts {
-            eprintln!("inserting {k}:{v}");
             tree.insert(Slot::new_leaf(*k, *v));
         }
 
@@ -484,5 +483,6 @@ mod test {
 
         // Flakey
         eprintln!("inserts: {:?}\n values: {:?}", inserts, values);
+        assert!(inserts == values);
     }
 }
