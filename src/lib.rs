@@ -137,7 +137,7 @@ where
         gt_node.values = gt;
 
         let gt_node = Box::into_raw(Box::new(gt_node));
-        if self.t == NodeType::Leaf {
+        if self.is_leaf() {
             if !self.next.is_null() {
                 unsafe { (*gt_node).next = self.next };
             }
@@ -166,12 +166,7 @@ where
             let gtk = gt_node.last_k().expect("gt should have a last slot");
             let mut ns = Slot::new_internal(gtk, raw_gt_node);
 
-            if !me.is_leaf() {
-                assert!(!gt_node.is_leaf());
-
-                // me.values.remove(&rs);
-                // gt_node.values.remove(&ns);
-            } else {
+            if me.is_leaf() {
                 rs.incr_k();
                 ns.incr_k();
             }
@@ -290,9 +285,41 @@ where
                     None => Node::new_leaf(node.max),
                 };
 
+                let is_leaf = new.is_leaf();
                 let ptr = Box::into_raw(Box::new(new));
                 let slot = Slot::new_internal(value.0 + 1, ptr);
                 node.values.insert(slot);
+
+                // Leaf next ptrs need to be set here since the algorithm is slightly wrong
+                // Ideally only split would set the next ptrs
+                if is_leaf && node.values.len() > 1 {
+                    // Find its sibling nodes
+                    let values = node.values.iter().collect::<Vec<&Slot<K, V>>>();
+                    let i = values.binary_search(&&slot).unwrap();
+
+                    if i > 0 {
+                        let l = i - 1;
+
+                        // Len is greater than 1 so this is ok to unwrap
+                        let slot = values.get(l).unwrap();
+                        // If `new` is a leaf node then `node` is internal, so we can take the ptr
+                        let left = unsafe { &mut *get_right!(slot) };
+
+                        left.next = ptr;
+                    }
+
+                    if i < values.len() - 1 {
+                        let r = i + 1;
+
+                        // Len is greater than 1 so this is ok to unwrap
+                        let slot = values.get(r).unwrap();
+                        // If `new` is a leaf node then `node` is internal, so we can take the ptr
+                        let right = get_right!(slot);
+
+                        let new = unsafe { &mut *ptr };
+                        new.next = right;
+                    }
+                }
 
                 ptr
             }
@@ -332,6 +359,21 @@ where
             }
             None => None,
         }
+    }
+
+    #[cfg(test)]
+    fn get_leftmost_leaf(raw_node: *mut Node<K, V>) -> *mut Node<K, V> {
+        let node = unsafe { &*raw_node };
+        if node.is_leaf() {
+            return raw_node;
+        }
+
+        let mut ret = ptr::null_mut();
+        if let Some(slot) = node.values.first() {
+            ret = Self::get_leftmost_leaf(get_right!(slot));
+        }
+
+        ret
     }
 
     pub fn print(raw_node: *mut Node<K, V>)
@@ -403,8 +445,6 @@ mod test {
             tree.insert(Slot::new_leaf(*k, *v));
         }
 
-        BTree::print(tree.root);
-
         for (k, v) in inserts {
             let test = match tree.get(k) {
                 Some(t) => t,
@@ -414,5 +454,35 @@ mod test {
             let got = get_left!(test);
             assert!(got == v, "Expected: {v}\n     Got {got}");
         }
+    }
+
+    #[test]
+    fn test_btree_scan() {
+        const MAX: usize = 8;
+
+        let mut tree = BTree::new(MAX);
+
+        let mut inserts = get_inserts(0..50);
+        for (k, v) in &inserts {
+            eprintln!("inserting {k}:{v}");
+            tree.insert(Slot::new_leaf(*k, *v));
+        }
+
+        inserts.sort_by(|(ka, _), (kb, _)| ka.cmp(kb));
+
+        let mut values = Vec::with_capacity(inserts.len());
+        let mut cur = BTree::get_leftmost_leaf(tree.root);
+
+        while cur != ptr::null_mut() {
+            let node = unsafe { &*cur };
+            node.values.iter().for_each(|s| {
+                values.push((s.0, get_left!(s)));
+            });
+
+            cur = node.next;
+        }
+
+        // Flakey
+        eprintln!("inserts: {:?}\n values: {:?}", inserts, values);
     }
 }
