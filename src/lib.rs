@@ -1,10 +1,7 @@
 use std::{collections::BTreeSet, ptr};
 
-use rand::seq::SliceRandom;
-use rand::thread_rng;
-
 #[derive(PartialEq, Eq, Debug, Clone, Copy)]
-enum Either<A, B> {
+pub enum Either<A, B> {
     Left(A),
     Right(B),
 }
@@ -122,15 +119,6 @@ where
         self.values.len() >= self.max / 2
     }
 
-    // if max = 8
-    // node has values (0, 1, 3, 4)
-    // inserting 2 creates (0, 1, 2, 3, 4)
-    // mid is 2 but ends up on the self node (0, 1, 2)
-    // last() returns 1 since it isn't inserted until later
-    // resulting seperator is 2
-    // get(2) returns None
-    // solution: call last() after insert
-
     /// Returns greater half, new key for it and new key for replace
     pub fn split(&mut self) -> *mut Node<K, V> {
         let len = self.values.len();
@@ -163,30 +151,25 @@ where
     pub fn get_separators(
         &mut self,
         other: Option<*mut Node<K, V>>,
-        // og: *mut Node<K, V>, // if self == other, use og in place of self
+        og: *mut Node<K, V>, // if self == other, use og in place of self
     ) -> Option<(Slot<K, V>, Slot<K, V>)> {
         other.map(|raw_gt_node| {
-            let rk = self
-                .values
-                .last()
-                .map(|s| s.0)
-                .expect("self should have a last slot");
+            let me = (|node: *mut Node<K, V>| {
+                let me = if node == raw_gt_node { og } else { node };
+                unsafe { &mut (*me) }
+            })(self);
 
-            let mut rs = Slot::new_internal(rk, self);
+            let rk = me.last_k().expect("self should have a last slot");
+            let mut rs = Slot::new_internal(rk, me);
 
             let gt_node = unsafe { &mut (*raw_gt_node) };
-            let gtk = gt_node
-                .values
-                .last()
-                .map(|s| s.0)
-                .expect("gt should have a last slot");
-
+            let gtk = gt_node.last_k().expect("gt should have a last slot");
             let mut ns = Slot::new_internal(gtk, raw_gt_node);
 
-            if !self.is_leaf() {
+            if !me.is_leaf() {
                 assert!(!gt_node.is_leaf());
 
-                // self.values.remove(&rs);
+                // me.values.remove(&rs);
                 // gt_node.values.remove(&ns);
             } else {
                 rs.incr_k();
@@ -205,6 +188,22 @@ where
 
         let n = self.values.iter().find(|n| value < **n)?;
         Some(get_right!(n))
+    }
+
+    pub fn first_k(&self) -> Option<K> {
+        self.values.first().map(|s| s.0)
+    }
+
+    pub fn first_v(&self) -> Option<Either<V, *mut Node<K, V>>> {
+        self.values.first().map(|s| s.1)
+    }
+
+    pub fn last_k(&self) -> Option<K> {
+        self.values.last().map(|s| s.0)
+    }
+
+    pub fn last_v(&self) -> Option<Either<V, *mut Node<K, V>>> {
+        self.values.last().map(|s| s.1)
     }
 
     pub fn is_leaf(&self) -> bool {
@@ -255,7 +254,6 @@ where
         }
     }
 
-    // TODO: Handle new leaves created from `find_child` match - ensure next nodes are set
     #[must_use]
     pub fn _insert(
         raw_node: *mut Node<K, V>,
@@ -268,17 +266,10 @@ where
         let mut split = None;
         if node.almost_full() {
             let raw_gt_node = node.split();
+            split = Some(raw_gt_node);
 
-            split = node.get_separators(Some(raw_gt_node));
+            let last = node.last_k().expect("there should be a last node");
 
-            let last = node
-                .values
-                .last()
-                .map(|s| s.0)
-                .expect("there should be a last node");
-
-            // TODO: this makes returning get_separators later incorrect, should keep og node
-            // around
             if value.0 >= last {
                 node = unsafe { &mut *raw_gt_node };
             }
@@ -288,8 +279,8 @@ where
             Some(ptr) => ptr,
             None if node.is_root || !node.is_leaf() => {
                 // Figure out what type of node we need to create:
-                let new = match node.values.first() {
-                    Some(n) => match n.1 {
+                let new = match node.first_v() {
+                    Some(n) => match n {
                         Either::Left(_) => unreachable!(),
                         Either::Right(ptr) => match unsafe { &(*ptr).t } {
                             NodeType::Internal => Node::new_internal(node.max),
@@ -307,8 +298,7 @@ where
             }
             None => {
                 node.values.replace(value);
-                return split;
-                // return node.get_separators(split);
+                return node.get_separators(split, raw_node);
             }
         };
 
@@ -317,8 +307,7 @@ where
             node.values.replace(new_slot);
         }
 
-        // node.get_separators(split)
-        split
+        node.get_separators(split, raw_node)
     }
 
     pub fn get(&self, key: K) -> Option<Slot<K, V>> {
@@ -384,6 +373,8 @@ where
 mod test {
     use std::ops::Range;
 
+    use rand::{seq::SliceRandom, thread_rng};
+
     use super::*;
 
     fn get_inserts(key_range: Range<u8>) -> Vec<(u8, u8)> {
@@ -406,8 +397,7 @@ mod test {
 
         let mut tree = BTree::new(MAX);
 
-        // let inserts = get_inserts(0..10);
-        let inserts = get_inserts(0..10);
+        let inserts = get_inserts(0..50);
         for (k, v) in &inserts {
             eprintln!("inserting {k}:{v}");
             tree.insert(Slot::new_leaf(*k, *v));
