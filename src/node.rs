@@ -129,6 +129,11 @@ where
     pub fn replace(&mut self, slot: Slot<K, V>) {
         self.values.replace(slot);
     }
+
+    pub fn delete(&mut self, slot: &Slot<K, V>) -> bool {
+        self.values.remove(slot)
+    }
+
     pub fn get(&self, slot: &Slot<K, V>) -> Option<&Slot<K, V>> {
         self.values.get(slot)
     }

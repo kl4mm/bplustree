@@ -35,7 +35,7 @@ where
         if let Some((old_root_slot, split_slot)) = BTree::_insert(self.root, entry) {
             assert!(get_right!(old_root_slot) == self.root);
 
-            let root = unsafe { &mut (*self.root) };
+            let root = unsafe { &mut *self.root };
             root.is_root = false;
 
             let mut new_root = Node::new_internal(self.max);
@@ -52,7 +52,7 @@ where
         raw_node: *mut Node<K, V>,
         value: Slot<K, V>,
     ) -> Option<(Slot<K, V>, Slot<K, V>)> {
-        let mut node = unsafe { &mut (*raw_node) };
+        let mut node = unsafe { &mut *raw_node };
 
         // If `split` is set, it will hold the updated slot for `node` and a new slot for the
         // greater node
@@ -145,7 +145,7 @@ where
     }
 
     fn _get(raw_node: *mut Node<K, V>, slot: Slot<K, V>) -> Option<Slot<K, V>> {
-        let node = unsafe { &(*raw_node) };
+        let node = unsafe { &*raw_node };
 
         match node.find_child(slot) {
             Some(ptr) => Self::_get(ptr, slot),
@@ -156,6 +156,25 @@ where
                 }
             }
             None => None,
+        }
+    }
+
+    pub fn delete(&mut self, key: K) -> bool {
+        if self.root.is_null() {
+            return false;
+        }
+
+        let test = Slot::new_internal(key, ptr::null_mut());
+        Self::_delete(self.root, test)
+    }
+
+    fn _delete(raw_node: *mut Node<K, V>, slot: Slot<K, V>) -> bool {
+        let node = unsafe { &mut *raw_node };
+
+        match node.find_child(slot) {
+            Some(ptr) => Self::_delete(ptr, slot),
+            None if node.is_leaf() => return node.delete(&slot),
+            None => false,
         }
     }
 
@@ -210,14 +229,54 @@ mod test {
             tree.insert(Slot::new_leaf(*k, *v));
         }
 
-        for (k, v) in inserts {
-            let test = match tree.get(k) {
+        for (k, v) in &inserts {
+            let test = match tree.get(*k) {
                 Some(t) => t,
                 None => panic!("Could not find {k}:{v}"),
             };
 
             let got = get_left!(test);
-            assert!(got == v, "Expected: {v}\n     Got {got}");
+            assert!(got == *v, "Expected: {v}\n     Got {got}");
+        }
+
+        let (first_half, second_half) = inserts.split_at(inserts.len() / 2);
+
+        // Delete and make sure they no longer exist in the tree
+        for (k, _) in first_half {
+            tree.delete(*k);
+        }
+        for (k, _) in first_half {
+            match tree.get(*k) {
+                Some(_) => panic!("Unexpected deleted key: {k}"),
+                None => {}
+            };
+        }
+
+        // Make sure keys can still be accessed
+        for (k, v) in second_half {
+            let test = match tree.get(*k) {
+                Some(t) => t,
+                None => panic!("Could not find {k}:{v} in the second half"),
+            };
+
+            let got = get_left!(test);
+            assert!(got == *v, "Expected: {v}\n     Got {got}");
+        }
+
+        // Insert a different range
+        let inserts = get_inserts(25..100);
+        for (k, v) in &inserts {
+            tree.insert(Slot::new_leaf(*k, *v));
+        }
+
+        for (k, v) in &inserts {
+            let test = match tree.get(*k) {
+                Some(t) => t,
+                None => panic!("Could not find {k}:{v}"),
+            };
+
+            let got = get_left!(test);
+            assert!(got == *v, "Expected: {v}\n     Got {got}");
         }
     }
 
