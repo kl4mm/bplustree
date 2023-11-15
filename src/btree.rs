@@ -9,11 +9,37 @@ pub struct BTree<K, V> {
     max: usize,
 }
 
+pub trait Increment {
+    const MAX: Self;
+
+    fn increment(&mut self);
+    fn next(&self) -> Self;
+}
+
+macro_rules! impl_increment {
+    ($( $t:ty ),*) => {
+        $(
+        impl Increment for $t {
+            const MAX: Self = Self::MAX;
+
+            fn increment(&mut self) {
+                *self += 1;
+            }
+
+            fn next(&self) -> Self {
+                self + 1
+            }
+        }
+        )*
+    };
+}
+
+impl_increment!(i8, i16, i32, i64, isize, u8, u16, u32, u64, usize);
+
 use std::fmt::Debug;
-use std::ops::{Add, AddAssign};
 impl<K, V> BTree<K, V>
 where
-    K: Clone + Copy + Debug + Add<u8, Output = K> + AddAssign<u8> + Ord + Copy,
+    K: Clone + Copy + Debug + Ord + Copy + Increment,
     V: Clone + Copy + Debug + Eq,
 {
     pub fn new(max: usize) -> Self {
@@ -85,7 +111,7 @@ where
 
                 let is_leaf = new.is_leaf();
                 let ptr = Box::into_raw(Box::new(new));
-                let slot = Slot::new_internal(value.0 + 1, ptr);
+                let slot = Slot::new_internal(value.0.next(), ptr);
                 node.insert(slot);
 
                 // Leaf next ptrs need to be set here since the algorithm is slightly wrong

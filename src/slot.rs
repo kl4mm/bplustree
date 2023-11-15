@@ -1,5 +1,3 @@
-use std::ops::AddAssign;
-
 use crate::node::Node;
 
 #[derive(PartialEq, Eq, Debug, Clone, Copy)]
@@ -45,12 +43,5 @@ impl<A, B> Slot<A, B> {
             Either::Left(_) => true,
             Either::Right(_) => false,
         }
-    }
-
-    pub fn incr_k(&mut self)
-    where
-        A: AddAssign<u8>,
-    {
-        self.0 += 1;
     }
 }

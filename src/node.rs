@@ -3,6 +3,7 @@ use std::fmt::Debug;
 use std::ops::AddAssign;
 use std::ptr;
 
+use crate::btree::Increment;
 use crate::get_right;
 use crate::slot::{Either, Slot};
 
@@ -23,7 +24,7 @@ pub struct Node<K, V> {
 
 impl<K, V> Node<K, V>
 where
-    K: Copy + Debug + Ord + AddAssign<u8>,
+    K: Copy + Debug + Ord + Increment,
     V: Copy + Debug + Eq,
 {
     pub fn new_leaf(max: usize) -> Self {
@@ -92,8 +93,8 @@ where
             let mut ns = Slot::new_internal(gtk, raw_gt_node);
 
             if me.is_leaf() {
-                rs.incr_k();
-                ns.incr_k();
+                rs.0.increment();
+                ns.0.increment();
             }
 
             (rs, ns)
