@@ -45,3 +45,33 @@ impl<A, B> Slot<A, B> {
         }
     }
 }
+
+#[cfg(test)]
+mod test {
+    use std::collections::BTreeSet;
+
+    use super::Slot;
+
+    #[test]
+    fn test_set() {
+        let mut slots = BTreeSet::new();
+        for (a, b) in (0..10).zip((100..200).step_by(10)) {
+            slots.insert(Slot::new_leaf(a, b));
+        }
+
+        let want_len = slots.len();
+        let mut want = Vec::new();
+
+        for (a, b) in (0..10).zip((200..300).step_by(10)) {
+            let slot = Slot::new_leaf(a, b);
+            slots.replace(slot);
+            want.push(slot);
+        }
+
+        let have_len = slots.len();
+        assert!(want_len == have_len, "\nWant: {:?}\nHave: {:?}\n", want_len, have_len);
+
+        let have = slots.iter().map(|s| *s).collect::<Vec<Slot<i32, i32>>>();
+        assert!(want == have, "\nWant: {:?}\nHave: {:?}\n", want, have);
+    }
+}
