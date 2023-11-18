@@ -16,7 +16,7 @@ pub enum NodeType {
 #[derive(Debug)]
 pub struct Node<K, V> {
     pub t: NodeType,
-    values: BTreeSet<Slot<K, V>>,
+    pub values: BTreeSet<Slot<K, V>>,
     pub next: *mut Node<K, V>,
     pub max: usize,
     pub is_root: bool,
@@ -56,48 +56,70 @@ where
             .nth(len / 2)
             .expect("there should be a mid slot");
 
-        let gt = self.values.split_off(&mid);
-
         let mut gt_node = match self.t {
             NodeType::Internal => Node::new_internal(self.max),
             NodeType::Leaf => Node::new_leaf(self.max),
         };
-        gt_node.values = gt;
+        gt_node.values = self.values.split_off(&mid);
 
         let gt_node = Box::into_raw(Box::new(gt_node));
         if self.is_leaf() {
             unsafe { (*gt_node).next = self.next };
-
             self.next = gt_node;
         }
+
+        eprintln!("split {:p} creating {:?}: \n{:?}\n{:?}", self, gt_node, self.values, unsafe {
+            &(*gt_node).values
+        });
 
         gt_node
     }
 
-    pub fn get_separators(
-        &mut self,
+    // pub fn get_separator(
+    //     &mut self,
+    //     other: Option<*mut Node<K, V>>,
+    //     og: *mut Node<K, V>, // if self == other, use og in place of self
+    // ) -> Option<Slot<K, V>> {
+    //     // other.map(|raw_gt_node| {
+    //     //     let me = (|node: *mut Node<K, V>| {
+    //     //         let me = if node == raw_gt_node { og } else { node };
+    //     //         unsafe { &mut (*me) }
+    //     //     })(self);
+
+    //     //     let rk = me.last_k().expect("self should have a last slot");
+    //     //     let mut rs = Slot::new_internal(rk, me);
+
+    //     //     let gt_node = unsafe { &mut (*raw_gt_node) };
+    //     //     let gtk = gt_node.last_k().expect("gt should have a last slot");
+    //     //     let mut ns = Slot::new_internal(gtk, raw_gt_node);
+
+    //     //     if me.is_leaf() {
+    //     //         rs.0.increment();
+    //     //         ns.0.increment();
+    //     //     }
+
+    //     //     (rs, ns)
+    //     // })
+
+    //     other.map(|raw_node| {
+
+    //         let node = unsafe { &*raw_node };
+    //         let s = node.values.first().map(|s| s.0).unwrap();
+
+    //         todo!()
+    //     })
+    // }
+
+    pub fn get_separator(
+        ptr: *mut Node<K, V>,
         other: Option<*mut Node<K, V>>,
-        og: *mut Node<K, V>, // if self == other, use og in place of self
-    ) -> Option<(Slot<K, V>, Slot<K, V>)> {
-        other.map(|raw_gt_node| {
-            let me = (|node: *mut Node<K, V>| {
-                let me = if node == raw_gt_node { og } else { node };
-                unsafe { &mut (*me) }
-            })(self);
+    ) -> Option<(Slot<K, V>, *mut Node<K, V>)> {
+        other.map(|optr| {
+            let other = unsafe { &*optr };
+            let k = other.values.first().map(|s| s.0).unwrap();
+            let s = Slot::new_internal(k, ptr);
 
-            let rk = me.last_k().expect("self should have a last slot");
-            let mut rs = Slot::new_internal(rk, me);
-
-            let gt_node = unsafe { &mut (*raw_gt_node) };
-            let gtk = gt_node.last_k().expect("gt should have a last slot");
-            let mut ns = Slot::new_internal(gtk, raw_gt_node);
-
-            if me.is_leaf() {
-                rs.0.increment();
-                ns.0.increment();
-            }
-
-            (rs, ns)
+            (s, optr)
         })
     }
 
