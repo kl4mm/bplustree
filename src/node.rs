@@ -1,6 +1,5 @@
 use std::collections::{btree_set, BTreeSet};
 use std::fmt::Debug;
-use std::ops::AddAssign;
 use std::ptr;
 
 use crate::btree::Increment;
@@ -68,55 +67,23 @@ where
             self.next = gt_node;
         }
 
-        eprintln!("split {:p} creating {:?}: \n{:?}\n{:?}", self, gt_node, self.values, unsafe {
-            &(*gt_node).values
-        });
-
         gt_node
     }
-
-    // pub fn get_separator(
-    //     &mut self,
-    //     other: Option<*mut Node<K, V>>,
-    //     og: *mut Node<K, V>, // if self == other, use og in place of self
-    // ) -> Option<Slot<K, V>> {
-    //     // other.map(|raw_gt_node| {
-    //     //     let me = (|node: *mut Node<K, V>| {
-    //     //         let me = if node == raw_gt_node { og } else { node };
-    //     //         unsafe { &mut (*me) }
-    //     //     })(self);
-
-    //     //     let rk = me.last_k().expect("self should have a last slot");
-    //     //     let mut rs = Slot::new_internal(rk, me);
-
-    //     //     let gt_node = unsafe { &mut (*raw_gt_node) };
-    //     //     let gtk = gt_node.last_k().expect("gt should have a last slot");
-    //     //     let mut ns = Slot::new_internal(gtk, raw_gt_node);
-
-    //     //     if me.is_leaf() {
-    //     //         rs.0.increment();
-    //     //         ns.0.increment();
-    //     //     }
-
-    //     //     (rs, ns)
-    //     // })
-
-    //     other.map(|raw_node| {
-
-    //         let node = unsafe { &*raw_node };
-    //         let s = node.values.first().map(|s| s.0).unwrap();
-
-    //         todo!()
-    //     })
-    // }
 
     pub fn get_separator(
         ptr: *mut Node<K, V>,
         other: Option<*mut Node<K, V>>,
     ) -> Option<(Slot<K, V>, *mut Node<K, V>)> {
         other.map(|optr| {
-            let other = unsafe { &*optr };
-            let k = other.values.first().map(|s| s.0).unwrap();
+            let me = unsafe { &*ptr };
+
+            // Using last values for separators:
+            let last = me.values.last().unwrap();
+            let mut k = last.0;
+            if me.is_leaf() {
+                k.increment();
+            }
+
             let s = Slot::new_internal(k, ptr);
 
             (s, optr)
