@@ -66,7 +66,7 @@ where
 
             let mut node = Node::new_internal(self.max);
             node.is_root = true;
-            node.replace(s);
+            node.values.replace(s);
 
             match node.values.iter().find(|s| get_right!(s) == ptr) {
                 Some(s) => {
@@ -121,11 +121,11 @@ where
 
                 match node.find_child(value) {
                     Some(ptr) => ptr,
-                    None => unreachable!(""),
+                    None => unreachable!(),
                 }
             }
             None => {
-                node.replace(value);
+                node.values.replace(value);
                 return Node::get_separator(raw_node, split);
             }
         };
@@ -168,7 +168,7 @@ where
         match node.find_child(slot) {
             Some(ptr) => Self::_get(ptr, slot),
             None if node.is_leaf() => {
-                return match node.get(&slot) {
+                return match node.values.get(&slot) {
                     Some(slot) => Some(*slot),
                     None => None,
                 }
@@ -191,7 +191,7 @@ where
 
         match node.find_child(slot) {
             Some(ptr) => Self::_delete(ptr, slot),
-            None if node.is_leaf() => return node.delete(&slot),
+            None if node.is_leaf() => return node.values.remove(&slot),
             None => false,
         }
     }

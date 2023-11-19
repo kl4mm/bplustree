@@ -100,32 +100,8 @@ where
         Some(get_right!(n))
     }
 
-    pub fn len(&self) -> usize {
-        self.values.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.values.is_empty()
-    }
-
     pub fn almost_full(&self) -> bool {
         self.values.len() >= self.max / 2
-    }
-
-    pub fn insert(&mut self, slot: Slot<K, V>) {
-        self.values.insert(slot);
-    }
-
-    pub fn replace(&mut self, slot: Slot<K, V>) {
-        self.values.replace(slot);
-    }
-
-    pub fn delete(&mut self, slot: &Slot<K, V>) -> bool {
-        self.values.remove(slot)
-    }
-
-    pub fn get(&self, slot: &Slot<K, V>) -> Option<&Slot<K, V>> {
-        self.values.get(slot)
     }
 
     pub fn first(&self) -> Option<&Slot<K, V>> {
