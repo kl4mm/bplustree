@@ -58,7 +58,7 @@ where
             self.root = Box::into_raw(Box::new(root));
         }
 
-        if let Some((s, ptr)) = BTree::_insert(self.root, entry) {
+        if let Some((s, os)) = BTree::_insert(self.root, entry) {
             assert!(get_right!(s) == self.root);
 
             let root = unsafe { &mut *self.root };
@@ -67,8 +67,7 @@ where
             let mut node = Node::new_internal(self.max);
             node.is_root = true;
             node.values.replace(s);
-
-            Node::set_last(&mut node, ptr);
+            node.values.replace(os);
 
             self.root = Box::into_raw(Box::new(node));
         }
@@ -80,7 +79,7 @@ where
     pub fn _insert(
         raw_node: *mut Node<K, V>,
         value: Slot<K, V>,
-    ) -> Option<(Slot<K, V>, *mut Node<K, V>)> {
+    ) -> Option<(Slot<K, V>, Slot<K, V>)> {
         let mut node = unsafe { &mut *raw_node };
 
         // If `split` is set, it will hold the updated slot for `node` and a new slot for the
@@ -112,17 +111,16 @@ where
             }
             None => {
                 node.values.replace(value);
-                return Node::get_separator(raw_node, split);
+                return Node::get_separators(raw_node, split);
             }
         };
 
-        if let Some((s, ptr)) = BTree::_insert(ptr, value) {
+        if let Some((s, os)) = BTree::_insert(ptr, value) {
             node.values.replace(s);
-
-            Node::set_last(&mut node, ptr);
+            node.values.replace(os);
         }
 
-        Node::get_separator(raw_node, split)
+        Node::get_separators(raw_node, split)
     }
 
     pub fn get(&self, key: K) -> Option<Slot<K, V>> {
