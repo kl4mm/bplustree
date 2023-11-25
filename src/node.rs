@@ -70,26 +70,6 @@ where
         gt_node
     }
 
-    pub fn get_separator(
-        ptr: *mut Node<K, V>,
-        other: Option<*mut Node<K, V>>,
-    ) -> Option<(Slot<K, V>, *mut Node<K, V>)> {
-        other.map(|optr| {
-            let me = unsafe { &*ptr };
-
-            // Using last values for separators:
-            let last = me.values.last().unwrap();
-            let mut k = last.0;
-            if me.is_leaf() {
-                k.increment();
-            }
-
-            let s = Slot::new_internal(k, ptr);
-
-            (s, optr)
-        })
-    }
-
     pub fn get_separators(
         ptr: *mut Node<K, V>,
         other: Option<*mut Node<K, V>>,
