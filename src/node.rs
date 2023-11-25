@@ -90,6 +90,38 @@ where
         })
     }
 
+    pub fn get_separators(
+        ptr: *mut Node<K, V>,
+        other: Option<*mut Node<K, V>>,
+    ) -> Option<(Slot<K, V>, Slot<K, V>)> {
+        other.map(|optr| {
+            // Using last values for separators
+
+            let me = unsafe { &*ptr };
+            let ls = me.values.last().unwrap();
+            let k = if me.is_leaf() { ls.0.next() } else { ls.0 };
+            let s = Slot::new_internal(k, ptr);
+
+            let o = unsafe { &*optr };
+            let ls = o.values.last().unwrap();
+            let k = if o.is_leaf() { ls.0.next() } else { ls.0 };
+            let os = Slot::new_internal(k, optr);
+
+            (s, os)
+        })
+    }
+
+    pub fn set_last(node: &mut Node<K, V>, optr: *mut Node<K, V>) {
+        let o = unsafe { &*optr };
+        let ls = o.values.last().unwrap();
+        let k = if o.is_leaf() { ls.0.next() } else { ls.0 };
+        let s = Slot::new_internal(k, optr);
+        match node.values.replace(s) {
+            Some(s) => eprintln!("SLOT DISAPPEARING: {:?}", s),
+            None => {}
+        }
+    }
+
     /// Returns `None` if self is a leaf.
     pub fn find_child(&self, value: Slot<K, V>) -> Option<*mut Node<K, V>> {
         if self.is_leaf() {

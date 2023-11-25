@@ -68,21 +68,7 @@ where
             node.is_root = true;
             node.values.replace(s);
 
-            match node.values.iter().find(|s| get_right!(s) == ptr) {
-                Some(s) => {
-                    node.values.replace(Slot::new_internal(s.0, ptr));
-                }
-                None => {
-                    let u = unsafe { &*ptr };
-                    let ls = u.values.last().unwrap();
-                    let k = if u.is_leaf() { ls.0.next() } else { ls.0 };
-                    let s = Slot::new_internal(k, ptr);
-                    match node.values.replace(s) {
-                        Some(s) => eprintln!("SLOT DISAPPEARING: {:?}", s),
-                        None => {}
-                    }
-                }
-            }
+            Node::set_last(&mut node, ptr);
 
             self.root = Box::into_raw(Box::new(node));
         }
@@ -133,21 +119,7 @@ where
         if let Some((s, ptr)) = BTree::_insert(ptr, value) {
             node.values.replace(s);
 
-            match node.values.iter().find(|s| get_right!(s) == ptr) {
-                Some(s) => {
-                    node.values.replace(Slot::new_internal(s.0, ptr));
-                }
-                None => {
-                    let u = unsafe { &*ptr };
-                    let ls = u.values.last().unwrap();
-                    let k = if u.is_leaf() { ls.0.next() } else { ls.0 };
-                    let s = Slot::new_internal(k, ptr);
-                    match node.values.replace(s) {
-                        Some(s) => eprintln!("SLOT DISAPPEARING: {:?}", s),
-                        None => {}
-                    }
-                }
-            }
+            Node::set_last(&mut node, ptr);
         }
 
         Node::get_separator(raw_node, split)
